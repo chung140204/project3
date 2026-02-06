@@ -117,7 +117,7 @@ export default function Footer() {
             <ul className="space-y-3 text-sm text-gray-400">
               <li className="flex items-start gap-2">
                 <span className="text-gray-500">📧</span>
-                <span>support@fashionstore.com</span>
+                <span>chungtien6b@gmail.com</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-gray-500">📞</span>
@@ -126,8 +126,9 @@ export default function Footer() {
               <li className="flex items-start gap-2">
                 <span className="text-gray-500">📍</span>
                 <span>
-                  123 Đường ABC, Phường XYZ<br />
-                  Quận 1, TP. Hồ Chí Minh
+                  Nhà số 3, Phố Phan Đình Giót, Phường Phương Liệt<br />
+                  Thành phố Hà Nội<br />
+                  Việt Nam
                 </span>
               </li>
             </ul>

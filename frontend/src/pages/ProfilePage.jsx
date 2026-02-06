@@ -2,15 +2,18 @@
 // Modern, clean, professional account management UI
 
 import { useState, useEffect } from 'react';
-import { Form, Input, Button, Avatar, message, Spin } from 'antd';
+import { Form, Input, Button, Avatar, message, Spin, Modal } from 'antd';
 import { UserOutlined, MailOutlined, PhoneOutlined, SaveOutlined, LockOutlined } from '@ant-design/icons';
 import MainLayout from '../layouts/MainLayout';
 import api from '../services/api';
 
 export default function ProfilePage() {
   const [form] = Form.useForm();
+  const [passwordForm] = Form.useForm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [initialValues, setInitialValues] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [changedFields, setChangedFields] = useState(new Set());
@@ -90,6 +93,47 @@ export default function ProfilePage() {
       message.error(errorMessage);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openPasswordModal = () => {
+    passwordForm.resetFields();
+    setPasswordModalOpen(true);
+  };
+
+  const closePasswordModal = () => {
+    setPasswordModalOpen(false);
+    passwordForm.resetFields();
+  };
+
+  const handleChangePassword = async () => {
+    try {
+      const values = await passwordForm.validateFields();
+      setChangingPassword(true);
+
+      const res = await api.put('/users/me/password', {
+        currentPassword: values.currentPassword,
+        newPassword: values.newPassword,
+        confirmPassword: values.confirmPassword
+      });
+
+      if (res.data?.success) {
+        message.success(res.data?.message || 'Đổi mật khẩu thành công');
+        closePasswordModal();
+      } else {
+        message.error(res.data?.error || 'Không thể đổi mật khẩu');
+      }
+    } catch (err) {
+      // AntD validation error
+      if (err?.errorFields) return;
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        err.message ||
+        'Không thể đổi mật khẩu';
+      message.error(errorMsg);
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -246,9 +290,7 @@ export default function ProfilePage() {
                     icon={<LockOutlined />}
                     block
                     className="h-10 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-all"
-                    onClick={() => {
-                      message.info('Tính năng đổi mật khẩu đang được phát triển');
-                    }}
+                    onClick={openPasswordModal}
                   >
                     Đổi mật khẩu
                   </Button>
@@ -258,6 +300,57 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+
+      <Modal
+        title="Đổi mật khẩu"
+        open={passwordModalOpen}
+        onCancel={closePasswordModal}
+        onOk={handleChangePassword}
+        okText="Đổi mật khẩu"
+        cancelText="Hủy"
+        confirmLoading={changingPassword}
+        destroyOnClose
+      >
+        <Form form={passwordForm} layout="vertical" autoComplete="off">
+          <Form.Item
+            label="Mật khẩu hiện tại"
+            name="currentPassword"
+            rules={[{ required: true, message: 'Vui lòng nhập mật khẩu hiện tại' }]}
+          >
+            <Input.Password placeholder="Nhập mật khẩu hiện tại" />
+          </Form.Item>
+
+          <Form.Item
+            label="Mật khẩu mới"
+            name="newPassword"
+            rules={[
+              { required: true, message: 'Vui lòng nhập mật khẩu mới' },
+              { min: 6, message: 'Mật khẩu mới phải có ít nhất 6 ký tự' }
+            ]}
+          >
+            <Input.Password placeholder="Nhập mật khẩu mới" />
+          </Form.Item>
+
+          <Form.Item
+            label="Xác nhận mật khẩu mới"
+            name="confirmPassword"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: 'Vui lòng xác nhận mật khẩu mới' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Xác nhận mật khẩu không khớp'));
+                }
+              })
+            ]}
+          >
+            <Input.Password placeholder="Nhập lại mật khẩu mới" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </MainLayout>
   );
 }

@@ -26,7 +26,7 @@ CREATE TABLE users (
 CREATE TABLE categories (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
-    tax_rate DECIMAL(5, 2) NOT NULL DEFAULT 0.00 COMMENT 'VAT rate as percentage (e.g., 20.00 for 20%)',
+    tax_rate DECIMAL(5, 2) NOT NULL DEFAULT 0.00 COMMENT 'VAT rate as decimal (e.g., 0.1 for 10%)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_name (name)
@@ -71,6 +71,10 @@ CREATE TABLE orders (
     total_amount DECIMAL(10, 2) NOT NULL COMMENT 'Total amount including VAT',
     status ENUM('PENDING', 'PAID', 'CANCELLED', 'COMPLETED') NOT NULL DEFAULT 'PENDING' COMMENT 'Order status',
     order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    paid_at DATETIME NULL COMMENT 'When order was marked as PAID',
+    completed_at DATETIME NULL COMMENT 'When order was marked as COMPLETED',
+    refunded_at DATETIME NULL COMMENT 'When order was refunded',
+    return_status ENUM('NONE','REQUESTED','APPROVED','REJECTED') NOT NULL DEFAULT 'NONE' COMMENT 'Return request status',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE,

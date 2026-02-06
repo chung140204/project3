@@ -30,6 +30,11 @@ Thumbs.db
 dist/
 build/
 
+# Uploaded files
+uploads/
+
+
+
 
 
 

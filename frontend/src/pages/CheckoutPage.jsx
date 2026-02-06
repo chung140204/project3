@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Form, Input, Button, Table, message, Radio, Collapse, Checkbox, Spin, Select, Card } from 'antd';
+import { Form, Input, Button, Table, message, Radio, Collapse, Checkbox, Spin, Select, Card, Tag } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined, TagOutlined, EnvironmentOutlined, PlusOutlined } from '@ant-design/icons';
 import MainLayout from '../layouts/MainLayout';
 import { useCart } from '../hooks/useCart';

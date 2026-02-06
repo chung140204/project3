@@ -1,13 +1,43 @@
 // Order invoice/receipt page
 // Displays order details with itemized VAT breakdown
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Table, Button, Spin } from 'antd';
-import { PrinterOutlined, HomeOutlined } from '@ant-design/icons';
+import { Table, Button, Spin, Modal, Form, Input, Upload, message, Steps, Tag } from 'antd';
+import { PrinterOutlined, HomeOutlined, UndoOutlined, PlusOutlined, OrderedListOutlined, DollarOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import MainLayout from '../layouts/MainLayout';
 import api from '../services/api';
+import { ORDER_TRACKING_LABELS, RETURN_STATUS_CONFIG } from '../constants/orderCustomer';
+
+const { TextArea } = Input;
+
+/** Order progress timeline: PENDING → PAID → COMPLETED | CANCELLED */
+function OrderProgressTimeline({ status }) {
+  const s = (status || 'PENDING').toUpperCase();
+  const current = s === 'PENDING' ? 0 : s === 'PAID' ? 1 : 2;
+  const items = [
+    { title: 'Đặt hàng', description: 'Đơn hàng đã được tạo', icon: <OrderedListOutlined /> },
+    { title: 'Thanh toán', description: 'Đã thanh toán', icon: <DollarOutlined /> },
+    {
+      title: s === 'CANCELLED' ? 'Đã hủy' : 'Hoàn thành',
+      description: s === 'CANCELLED' ? 'Đơn hàng đã hủy' : 'Giao hàng thành công',
+      icon: s === 'CANCELLED' ? <CloseCircleOutlined /> : <CheckCircleOutlined />,
+      status: s === 'CANCELLED' ? 'error' : undefined,
+    },
+  ];
+  return (
+    <Steps
+      current={current}
+      items={items.map((item, i) => ({
+        title: item.title,
+        description: item.description,
+        icon: item.icon,
+        status: item.status ?? (i < current ? 'finish' : i === current ? 'process' : 'wait'),
+      }))}
+    />
+  );
+}
 
 // Convert number to Vietnamese words (simplified version)
 const convertNumberToWords = (num) => {
@@ -29,55 +59,63 @@ export default function InvoicePage() {
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [returnModalVisible, setReturnModalVisible] = useState(false);
+  const [returnForm] = Form.useForm();
+  const [submittingReturn, setSubmittingReturn] = useState(false);
+
+  const fetchInvoice = useCallback(async () => {
+    if (!id) return;
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await api.get(`/orders/${id}/invoice`);
+
+      if (response.data.success) {
+        const apiData = response.data.data;
+        setInvoice({
+          id: apiData.orderId,
+          orderDate: apiData.orderDate,
+          status: apiData.status || 'PENDING',
+          returnStatus: apiData.returnStatus || 'NONE',
+          completedAt: apiData.completedAt || null,
+          customerInfo: {
+            fullName: apiData.customer.name,
+            email: apiData.customer.email,
+            phone: apiData.customer.phone,
+            address: apiData.customer.address,
+            customerType: apiData.customer.type === 'BUSINESS' ? 'business' : 'individual',
+            companyName: apiData.customer.companyName,
+            taxCode: apiData.customer.taxCode,
+            orderNotes: apiData.note
+          },
+          items: apiData.items,
+          summary: apiData.summary,
+          voucher: apiData.voucher
+        });
+      } else {
+        setError(response.data.error || 'Không tìm thấy hóa đơn');
+      }
+    } catch (err) {
+      console.error('Error fetching invoice:', err);
+      if (err.response?.status === 403) {
+        setError(ORDER_TRACKING_LABELS.forbidden);
+      } else {
+        setError(err.response?.data?.error || err.message || 'Không thể tải hóa đơn');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
 
   useEffect(() => {
-    // Fetch invoice data from backend API
-    const fetchInvoice = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        const response = await api.get(`/orders/${id}/invoice`);
-
-        if (response.data.success) {
-          // Map API response to UI structure
-          const apiData = response.data.data;
-          setInvoice({
-            id: apiData.orderId,
-            orderDate: apiData.orderDate,
-            customerInfo: {
-              fullName: apiData.customer.name,
-              email: apiData.customer.email,
-              phone: apiData.customer.phone,
-              address: apiData.customer.address,
-              customerType: apiData.customer.type === 'BUSINESS' ? 'business' : 'individual',
-              companyName: apiData.customer.companyName,
-              taxCode: apiData.customer.taxCode,
-              orderNotes: apiData.note
-            },
-            items: apiData.items,
-            summary: apiData.summary,
-            voucher: apiData.voucher
-          });
-        } else {
-          setError(response.data.error || 'Không tìm thấy hóa đơn');
-        }
-      } catch (err) {
-        console.error('Error fetching invoice:', err);
-        const errorMessage = err.response?.data?.error || err.message || 'Không thể tải hóa đơn';
-        setError(errorMessage);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     if (id) {
       fetchInvoice();
     } else {
       setError('Mã đơn hàng không hợp lệ');
       setLoading(false);
     }
-  }, [id]);
+  }, [id, fetchInvoice]);
 
   // Format currency helper
   const formatCurrency = (amount) => {
@@ -94,6 +132,70 @@ export default function InvoicePage() {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // UC005: Nút hiện khi COMPLETED, NONE và trong vòng 7 ngày (ưu tiên completedAt, không có thì dùng orderDate)
+  const isWithinReturnWindow = (completedAt, orderDate) => {
+    const refDate = completedAt || orderDate;
+    if (!refDate) return false;
+    const ref = new Date(refDate);
+    const deadline = new Date(ref);
+    deadline.setDate(deadline.getDate() + 7);
+    return new Date() <= deadline;
+  };
+  const showReturnButton =
+    invoice?.status === 'COMPLETED' &&
+    invoice?.returnStatus === 'NONE' &&
+    isWithinReturnWindow(invoice?.completedAt, invoice?.orderDate);
+
+  const handleOpenReturnModal = () => {
+    returnForm.resetFields();
+    setReturnModalVisible(true);
+  };
+
+  const handleCloseReturnModal = () => {
+    setReturnModalVisible(false);
+    returnForm.resetFields();
+  };
+
+  const handleSubmitReturnRequest = async () => {
+    try {
+      const values = await returnForm.validateFields(['reason']);
+      const reason = values.reason?.trim?.() || '';
+      const fileList = values.media?.fileList ?? values.media ?? [];
+
+      const formData = new FormData();
+      formData.append('reason', reason);
+      fileList.forEach((item) => {
+        if (item?.originFileObj) {
+          formData.append('files', item.originFileObj);
+        }
+      });
+
+      setSubmittingReturn(true);
+      await api.post(`/orders/${id}/return-request`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        },
+        transformRequest: [(data, headers) => {
+          delete headers['Content-Type'];
+          return data;
+        }]
+      });
+
+      message.success('Yêu cầu trả hàng đã được gửi thành công');
+      handleCloseReturnModal();
+      fetchInvoice();
+    } catch (err) {
+      if (err.errorFields) {
+        return;
+      }
+      // Backend trả về { success: false, error: "..." } hoặc { success: false, message: "..." }
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || 'Không thể gửi yêu cầu trả hàng';
+      message.error(errorMsg);
+    } finally {
+      setSubmittingReturn(false);
+    }
   };
 
   // Table columns for invoice items
@@ -187,19 +289,27 @@ export default function InvoicePage() {
     );
   }
 
-  // Error state
+  // Error state (404, 403, or other)
   if (error || !invoice) {
+    const isForbidden = error === ORDER_TRACKING_LABELS.forbidden;
     return (
       <MainLayout>
         <div className="py-8">
           <div className="max-w-5xl mx-auto">
             <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
               <p className="text-red-600 mb-4">{error || 'Không tìm thấy hóa đơn'}</p>
-              <Link to="/">
-                <Button type="primary" icon={<HomeOutlined />}>
-                  Về trang chủ
-                </Button>
-              </Link>
+              <div className="flex gap-3 justify-center flex-wrap">
+                {isForbidden && (
+                  <Link to="/orders">
+                    <Button type="primary" icon={<OrderedListOutlined />}>
+                      {ORDER_TRACKING_LABELS.backToOrders}
+                    </Button>
+                  </Link>
+                )}
+                <Link to="/">
+                  <Button icon={<HomeOutlined />}>Về trang chủ</Button>
+                </Link>
+              </div>
             </div>
           </div>
         </div>
@@ -229,10 +339,9 @@ export default function InvoicePage() {
             {/* Company Header */}
             <div className="text-center mb-8 pb-6 border-b-2 border-gray-300">
               <h1 className="text-4xl font-bold text-gray-900 mb-2">
-                HÓA ĐƠN GTGT
+                HÓA ĐƠN
               </h1>
-              <p className="text-lg text-gray-600">(VAT Invoice)</p>
-              <p className="text-sm text-gray-500 mt-2">Fashion Store - Clothing E-commerce</p>
+            <p className="text-sm text-gray-500 mt-2">Fashion Store - Clothing E-commerce</p>
             </div>
 
             {/* Invoice Info */}
@@ -248,6 +357,22 @@ export default function InvoicePage() {
                 </p>
               </div>
             </div>
+
+            {/* Order progress timeline (UC003) */}
+            <div className="mb-6 pb-6 border-b border-gray-200">
+              <p className="text-sm text-gray-600 mb-3">Tiến trình đơn hàng</p>
+              <OrderProgressTimeline status={invoice.status} />
+            </div>
+
+            {/* UC005 – Return request status badge */}
+            {invoice.status === 'COMPLETED' && (
+              <div className="mb-6 pb-6 border-b border-gray-200">
+                <p className="text-sm text-gray-600 mb-2">Yêu cầu trả hàng</p>
+                <Tag color={RETURN_STATUS_CONFIG[invoice.returnStatus]?.color ?? 'default'}>
+                  {RETURN_STATUS_CONFIG[invoice.returnStatus]?.label ?? invoice.returnStatus}
+                </Tag>
+              </div>
+            )}
 
             {/* Customer Information */}
             <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
@@ -311,7 +436,7 @@ export default function InvoicePage() {
               columns={columns}
               dataSource={items || []}
               pagination={false}
-              rowKey={(record, index) => `${record.productId}-${index}`}
+              rowKey={(record) => `${record.productId}-${record.price}-${record.quantity}`}
               className="invoice-table"
             />
           </motion.div>
@@ -399,7 +524,7 @@ export default function InvoicePage() {
 
           {/* Action Buttons */}
           <motion.div
-            className="mt-6 flex gap-4 justify-center"
+            className="mt-6 flex gap-4 justify-center flex-wrap"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.4, delay: 0.4 }}
@@ -413,12 +538,79 @@ export default function InvoicePage() {
             >
               In hóa đơn
             </Button>
+            {showReturnButton && (
+              <Button
+                type="primary"
+                size="large"
+                icon={<UndoOutlined />}
+                onClick={handleOpenReturnModal}
+                className="h-11 bg-orange-500 hover:bg-orange-600 border-orange-500"
+              >
+                Gửi yêu cầu trả hàng
+              </Button>
+            )}
             <Link to="/">
               <Button size="large" icon={<HomeOutlined />} className="h-11">
                 Về trang chủ
               </Button>
             </Link>
           </motion.div>
+
+          {/* Modal Yêu cầu trả hàng */}
+          <Modal
+            title="Yêu cầu trả hàng"
+            open={returnModalVisible}
+            onCancel={handleCloseReturnModal}
+            onOk={handleSubmitReturnRequest}
+            confirmLoading={submittingReturn}
+            okText="Gửi yêu cầu"
+            cancelText="Hủy"
+            destroyOnClose
+          >
+            <Form
+              form={returnForm}
+              layout="vertical"
+              preserve={false}
+            >
+              <Form.Item
+                name="reason"
+                label="Lý do trả hàng"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập lý do trả hàng' },
+                  { whitespace: true, message: 'Lý do không được để trống' }
+                ]}
+              >
+                <TextArea
+                  rows={4}
+                  placeholder="Nhập lý do trả hàng..."
+                  maxLength={500}
+                  showCount
+                />
+              </Form.Item>
+              <Form.Item
+                name="media"
+                label="Ảnh hoặc video chứng minh (tùy chọn, tối đa 5)"
+                valuePropName="fileList"
+                getValueFromEvent={(e) => {
+                  if (Array.isArray(e)) return e;
+                  return e?.fileList || [];
+                }}
+              >
+                <Upload
+                  listType="picture-card"
+                  accept="image/*,video/*"
+                  multiple
+                  beforeUpload={() => false}
+                  maxCount={5}
+                >
+                  <div>
+                    <PlusOutlined />
+                    <div style={{ marginTop: 8 }}>Tải lên</div>
+                  </div>
+                </Upload>
+              </Form.Item>
+            </Form>
+          </Modal>
         </div>
       </motion.div>
     </MainLayout>

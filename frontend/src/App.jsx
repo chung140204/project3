@@ -16,6 +16,11 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminOrderDetailPage from './pages/AdminOrderDetailPage';
+import AdminVATReportPage from './pages/AdminVATReportPage';
+import AdminCategoriesPage from './pages/AdminCategoriesPage';
+import AdminProductsPage from './pages/AdminProductsPage';
+import AdminUsersPage from './pages/AdminUsersPage';
+import AdminReturnRequestsPage from './pages/AdminReturnRequestsPage';
 import ProfilePage from './pages/ProfilePage';
 import OrdersPage from './pages/OrdersPage';
 import AddressesPage from './pages/AddressesPage';
@@ -136,6 +141,46 @@ function App() {
               element={
                 <AdminRoute>
                   <AdminOrderDetailPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/return-requests"
+              element={
+                <AdminRoute>
+                  <AdminReturnRequestsPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/vat-report"
+              element={
+                <AdminRoute>
+                  <AdminVATReportPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/categories"
+              element={
+                <AdminRoute>
+                  <AdminCategoriesPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/products"
+              element={
+                <AdminRoute>
+                  <AdminProductsPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/users"
+              element={
+                <AdminRoute>
+                  <AdminUsersPage />
                 </AdminRoute>
               }
             />

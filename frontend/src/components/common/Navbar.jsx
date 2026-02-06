@@ -21,11 +21,25 @@ import { Avatar } from 'antd';
 export default function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef(null);
   const { itemCount } = useCart();
   const { user, logout, setAuth, token } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const userMenuRef = useRef(null);
+
+  const handleSearchSubmit = () => {
+    const q = (searchQuery || '').trim();
+    setSearchExpanded(false);
+    setSearchQuery('');
+    if (q) {
+      navigate(`/products?q=${encodeURIComponent(q)}`);
+    } else {
+      navigate('/products');
+    }
+  };
 
   // Fetch user data from API to ensure it's up-to-date (especially name field)
   useEffect(() => {
@@ -131,17 +145,34 @@ export default function Navbar() {
 
           {/* RIGHT: Search, User Menu, Cart */}
           <div className="flex items-center space-x-4">
-            {/* Search Icon (Optional) */}
-            <button
-              className="hidden lg:block text-white hover:text-gray-300 transition-colors"
-              title="Tìm kiếm"
-              onClick={() => {
-                // Placeholder for future search functionality
-                console.log('Search clicked');
-              }}
-            >
-              <SearchOutlined className="text-lg" />
-            </button>
+            {/* Search: icon expands to input on desktop */}
+            <div className="hidden lg:flex items-center">
+              {searchExpanded ? (
+                <Input
+                  ref={searchInputRef}
+                  placeholder="Tìm sản phẩm..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onPressEnter={handleSearchSubmit}
+                  onBlur={() => setTimeout(() => setSearchExpanded(false), 200)}
+                  autoFocus
+                  className="w-48 bg-gray-800 border-gray-600 text-white placeholder:text-gray-400"
+                  allowClear
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="text-white hover:text-gray-300 transition-colors p-1"
+                  title="Tìm kiếm"
+                  onClick={() => {
+                    setSearchExpanded(true);
+                    setTimeout(() => searchInputRef.current?.focus(), 50);
+                  }}
+                >
+                  <SearchOutlined className="text-lg" />
+                </button>
+              )}
+            </div>
 
             {/* User Menu Dropdown */}
             {user && (
@@ -205,7 +236,7 @@ export default function Navbar() {
                         className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
                       >
                         <ShoppingOutlined className="mr-3 text-gray-400" />
-                        Lịch sử mua hàng
+                        Đơn hàng & Hóa đơn
                       </Link>
                       <Link
                         to="/addresses"
@@ -331,7 +362,7 @@ export default function Navbar() {
                   className="block px-3 py-2 text-gray-300 hover:text-white hover:bg-gray-900 rounded-md transition-colors"
                   onClick={() => setIsMobileMenuOpen(false)}
                 >
-                  Lịch sử mua hàng
+                  Đơn hàng & Hóa đơn
                 </Link>
                 {user.role === 'ADMIN' && (
                   <Link

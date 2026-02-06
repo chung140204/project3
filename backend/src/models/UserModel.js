@@ -123,6 +123,76 @@ class UserModel {
     return this.findById(id);
   }
 
+  /**
+   * Update user (admin) - full_name/name, email, phone, role, optional password_hash
+   * Handles both 'name' and 'full_name' column names.
+   */
+  static async updateForAdmin(id, userData) {
+    const { name, email, phone, role, password_hash } = userData;
+    const updateFields = [];
+    const updateValues = [];
+
+    if (name !== undefined) {
+      updateFields.push('name = ?');
+      updateValues.push(name.trim());
+    }
+    if (email !== undefined) {
+      updateFields.push('email = ?');
+      updateValues.push(email.trim().toLowerCase());
+    }
+    if (phone !== undefined) {
+      updateFields.push('phone = ?');
+      updateValues.push(phone ? String(phone).trim() : null);
+    }
+    if (role !== undefined) {
+      updateFields.push('role = ?');
+      updateValues.push(role);
+    }
+    if (password_hash !== undefined && password_hash !== null && password_hash !== '') {
+      updateFields.push('password_hash = ?');
+      updateValues.push(password_hash);
+    }
+    if (updateFields.length === 0) {
+      return this.findById(id);
+    }
+    updateValues.push(id);
+
+    let query = `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`;
+    try {
+      await pool.query(query, updateValues);
+      return this.findById(id);
+    } catch (error) {
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.message.includes('name')) {
+        const nameIdx = updateFields.indexOf('name = ?');
+        if (nameIdx !== -1) {
+          updateFields[nameIdx] = 'full_name = ?';
+          query = `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`;
+          await pool.query(query, updateValues);
+          return this.findById(id);
+        }
+      }
+      throw error;
+    }
+  }
+
+  /** Count users with role ADMIN (for prevent delete last admin) */
+  static async countByRole(role) {
+    const [rows] = await pool.query(
+      'SELECT COUNT(*) as count FROM users WHERE role = ?',
+      [role]
+    );
+    return rows[0]?.count ?? 0;
+  }
+
+  /** Find by email excluding id (for unique check on update) */
+  static async findByEmailExcludingId(email, excludeId) {
+    const [rows] = await pool.query(
+      'SELECT id FROM users WHERE email = ? AND id != ?',
+      [email.trim().toLowerCase(), excludeId]
+    );
+    return rows[0] || null;
+  }
+
   // Update current user profile (name and phone only)
   // Database schema: id, name, email, password_hash, phone, role, created_at, updated_at
   static async updateProfile(id, userData) {
@@ -149,6 +219,24 @@ class UserModel {
     await pool.query(query, updateValues);
     
     return this.findById(id);
+  }
+
+  /** Get password_hash by user id (for change password flow) */
+  static async getPasswordHashById(id) {
+    const [rows] = await pool.query(
+      'SELECT password_hash FROM users WHERE id = ?',
+      [id]
+    );
+    return rows[0]?.password_hash ?? null;
+  }
+
+  /** Update password_hash by user id */
+  static async updatePasswordHash(id, password_hash) {
+    const [result] = await pool.query(
+      'UPDATE users SET password_hash = ? WHERE id = ?',
+      [password_hash, id]
+    );
+    return result.affectedRows > 0;
   }
 
   // Delete user

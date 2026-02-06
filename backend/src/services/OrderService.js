@@ -1,7 +1,13 @@
+const pool = require('../config/database');
 const ProductModel = require('../models/ProductModel');
 const OrderModel = require('../models/OrderModel');
 const OrderItemModel = require('../models/OrderItemModel');
-const TaxService = require('./TaxService');
+const EmailService = require('./EmailService');
+
+/**
+ * Round to 2 decimal places
+ */
+const round2 = (n) => Math.round(n * 100) / 100;
 
 class OrderService {
   /**
@@ -34,7 +40,7 @@ class OrderService {
 
     return {
       valid: true,
-      discount: Math.round(discount * 100) / 100,
+      discount: round2(discount),
       type: voucher.type
     };
   }
@@ -42,6 +48,8 @@ class OrderService {
   /**
    * Create an order from cart items
    * IMPORTANT: All VAT calculations are done on backend - never trust frontend
+   * Calculation order: subtotal -> voucher -> finalSubtotal -> VAT per item -> total
+   * Uses transaction and stock validation
    * @param {number} userId - User ID placing the order
    * @param {Array} items - Array of items with {productId, quantity, size, color}
    * @param {Object} customer - Customer information
@@ -58,93 +66,192 @@ class OrderService {
       throw new Error('Customer information is required (name, email, address)');
     }
 
-    // Fetch all products and calculate totals (NEVER trust frontend)
-    const orderItemsData = [];
-    let subtotal = 0;
-    let totalVAT = 0;
+    const connection = await pool.getConnection();
 
-    for (const item of items) {
-      const { productId, quantity, size, color } = item;
+    try {
+      await connection.beginTransaction();
 
-      // Validate item
-      if (!productId || !quantity || quantity <= 0) {
-        throw new Error('Invalid item: productId and quantity are required');
+      // Step 1: Fetch all products and build line items (NEVER trust frontend)
+      const lineItems = [];
+      let subtotal = 0;
+
+      for (const item of items) {
+        const { productId, quantity, size, color } = item;
+
+        if (!productId || !quantity || quantity <= 0) {
+          throw new Error('Invalid item: productId and quantity are required');
+        }
+
+        const product = await ProductModel.findById(productId, connection);
+        if (!product) {
+          throw new Error(`Product with id ${productId} not found`);
+        }
+
+        // Check stock
+        const currentStock = parseInt(product.stock || 0);
+        if (currentStock < quantity) {
+          throw new Error(
+            `Insufficient stock for "${product.name}". Available: ${currentStock}, requested: ${quantity}`
+          );
+        }
+
+        const price = parseFloat(product.price);
+        const taxRate = parseFloat(product.tax_rate || 0);
+        const lineSubtotal = price * quantity;
+
+        lineItems.push({
+          product_id: productId,
+          quantity,
+          price,
+          tax_rate: taxRate,
+          line_subtotal: lineSubtotal,
+          size: size || null,
+          color: color || null
+        });
+
+        subtotal += lineSubtotal;
       }
 
-      // Fetch product with tax rate from database
-      const product = await ProductModel.findById(productId);
-      if (!product) {
-        throw new Error(`Product with id ${productId} not found`);
+      subtotal = round2(subtotal);
+
+      // Step 2: Apply voucher on subtotal (before VAT)
+      const voucher = this.validateVoucher(voucherCode, subtotal);
+      const voucherDiscount = voucher.valid ? voucher.discount : 0;
+      const finalSubtotal = round2(subtotal - voucherDiscount);
+
+      // Step 3: Calculate VAT per item based on finalSubtotal (proportional distribution)
+      // effective_subtotal = line_subtotal * (finalSubtotal / subtotal)
+      // tax_amount = effective_subtotal * tax_rate (rounded 2 decimals)
+      // total = effective_subtotal + tax_amount (rounded 2 decimals)
+      const proportion = subtotal > 0 ? finalSubtotal / subtotal : 1;
+      let totalVAT = 0;
+      const orderItemsData = [];
+
+      for (const line of lineItems) {
+        const effectiveSubtotal = round2(line.line_subtotal * proportion);
+        const taxAmount = round2(effectiveSubtotal * line.tax_rate);
+        const total = round2(effectiveSubtotal + taxAmount);
+
+        orderItemsData.push({
+          product_id: line.product_id,
+          quantity: line.quantity,
+          price: line.price,
+          vat_rate: line.tax_rate,
+          tax_amount: taxAmount,
+          total,
+          size: line.size,
+          color: line.color
+        });
+
+        totalVAT += taxAmount;
       }
 
-      // Get price and tax rate from database (NEVER trust frontend)
-      const price = parseFloat(product.price);
-      const taxRate = parseFloat(product.tax_rate || 0);
+      totalVAT = round2(totalVAT);
+      const totalAmount = round2(finalSubtotal + totalVAT);
 
-      // Calculate VAT and totals on backend
-      const lineSubtotal = price * quantity;
-      const taxAmount = TaxService.calculateTax(price, quantity, taxRate);
-      const lineTotal = TaxService.calculateTotal(price, quantity, taxRate);
+      // Step 4: Create order record
+      const order = await OrderModel.create(
+        {
+          user_id: userId,
+          customer_name: customer.name,
+          customer_email: customer.email,
+          customer_phone: customer.phone || null,
+          customer_address: customer.address,
+          customer_type: customer.type || 'INDIVIDUAL',
+          company_name: customer.companyName || null,
+          tax_code: customer.taxCode || null,
+          order_note: customer.note || null,
+          voucher_code: voucher.valid ? voucherCode : null,
+          voucher_discount: voucherDiscount,
+          subtotal,
+          total_vat: totalVAT,
+          total_amount: totalAmount,
+          status: 'PENDING'
+        },
+        connection
+      );
 
-      // Store order item data
-      orderItemsData.push({
-        product_id: productId,
-        quantity,
-        price,
-        tax_amount: taxAmount,
-        total: lineTotal,
-        size: size || null,
-        color: color || null
-      });
+      // Step 5: Create order items and decrement stock
+      for (const itemData of orderItemsData) {
+        await OrderItemModel.create(
+          {
+            order_id: order.id,
+            ...itemData
+          },
+          connection
+        );
 
-      // Accumulate totals
-      subtotal += lineSubtotal;
-      totalVAT += taxAmount;
+        const decremented = await ProductModel.decrementStock(
+          itemData.product_id,
+          itemData.quantity,
+          connection
+        );
+        if (!decremented) {
+          throw new Error(
+            `Failed to decrement stock for product ${itemData.product_id}`
+          );
+        }
+      }
+
+      await connection.commit();
+
+      // Send order confirmation email (non-blocking - don't fail order if email fails)
+      try {
+        // Fetch order items with product details for email
+        const orderItems = await OrderItemModel.findByOrderId(order.id);
+        
+        // Format items for email
+        const emailItems = orderItems.map(item => ({
+          name: item.product_name || 'Sản phẩm',
+          quantity: item.quantity,
+          price: parseFloat(item.price),
+          vatRate: parseFloat(item.vat_rate || 0),
+          size: item.size,
+          color: item.color
+        }));
+
+        // Prepare email data
+        const emailData = {
+          orderId: order.id,
+          orderDate: order.order_date,
+          customer: {
+            name: customer.name,
+            email: customer.email,
+            phone: customer.phone || null,
+            address: customer.address
+          },
+          items: emailItems,
+          summary: {
+            subtotal: subtotal, // Original subtotal before discount
+            finalSubtotal: finalSubtotal,
+            totalVAT: totalVAT,
+            total: totalAmount
+          },
+          voucher: voucher.valid && voucherDiscount > 0 ? {
+            code: voucherCode,
+            discount: voucherDiscount,
+            type: voucher.type
+          } : null
+        };
+
+        // Send email asynchronously (don't await - non-blocking)
+        EmailService.sendOrderConfirmation(emailData).catch(err => {
+          console.error('Failed to send order confirmation email:', err);
+        });
+      } catch (emailError) {
+        // Log but don't fail order creation
+        console.error('Error preparing order confirmation email:', emailError);
+      }
+
+      return {
+        orderId: order.id
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
     }
-
-    // Round subtotal and VAT
-    subtotal = Math.round(subtotal * 100) / 100;
-    totalVAT = Math.round(totalVAT * 100) / 100;
-
-    // Apply voucher discount (if any)
-    const voucher = this.validateVoucher(voucherCode, subtotal);
-    const voucherDiscount = voucher.valid ? voucher.discount : 0;
-    const finalSubtotal = subtotal - voucherDiscount;
-
-    // Calculate final total (subtotal - discount + VAT)
-    const totalAmount = finalSubtotal + totalVAT;
-
-    // Create order record with all customer info
-    const order = await OrderModel.create({
-      user_id: userId,
-      customer_name: customer.name,
-      customer_email: customer.email,
-      customer_phone: customer.phone || null,
-      customer_address: customer.address,
-      customer_type: customer.type || 'INDIVIDUAL',
-      company_name: customer.companyName || null,
-      tax_code: customer.taxCode || null,
-      order_note: customer.note || null,
-      voucher_code: voucher.valid ? voucherCode : null,
-      voucher_discount: voucherDiscount,
-      subtotal: subtotal,
-      total_vat: totalVAT,
-      total_amount: Math.round(totalAmount * 100) / 100,
-      status: 'PENDING'
-    });
-
-    // Create order items records
-    for (const itemData of orderItemsData) {
-      await OrderItemModel.create({
-        order_id: order.id,
-        ...itemData
-      });
-    }
-
-    // Return only orderId as specified
-    return {
-      orderId: order.id
-    };
   }
 
   /**
@@ -168,6 +275,7 @@ class OrderService {
 
   /**
    * Get invoice data for an order
+   * Uses snapshot data from order_items (vat_rate, tax_amount, total) - no recalculation
    * @param {number} orderId - Order ID
    * @returns {Promise<Object>} Full invoice data
    */
@@ -179,13 +287,13 @@ class OrderService {
 
     const orderItems = await OrderItemModel.findByOrderId(orderId);
 
-    // Format invoice items
+    // Format invoice items - use snapshot data from order_items
     const items = orderItems.map(item => ({
       productId: item.product_id,
       name: item.product_name,
       quantity: item.quantity,
       price: parseFloat(item.price),
-      vatRate: item.tax_amount / (item.price * item.quantity), // Calculate VAT rate
+      vatRate: parseFloat(item.vat_rate ?? 0),
       vatAmount: parseFloat(item.tax_amount),
       total: parseFloat(item.total),
       size: item.size,
@@ -197,6 +305,9 @@ class OrderService {
       orderId: order.id,
       orderDate: order.order_date,
       status: order.status || 'PENDING',
+      returnStatus: order.return_status || 'NONE',
+      completedAt: order.completed_at || null,
+      refundedAt: order.refunded_at || null,
       customer: {
         name: order.customer_name,
         email: order.customer_email,
@@ -230,7 +341,7 @@ class OrderService {
    */
   static async getOrdersByUserId(userId) {
     const orders = await OrderModel.findByUserId(userId);
-    
+
     const ordersWithItems = await Promise.all(
       orders.map(async (order) => {
         const orderItems = await OrderItemModel.findByOrderId(order.id);
@@ -246,4 +357,3 @@ class OrderService {
 }
 
 module.exports = OrderService;
-

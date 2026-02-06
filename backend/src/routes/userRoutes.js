@@ -10,6 +10,9 @@ router.get('/me', UserController.getCurrentUser);
 // PUT /api/users/me - Update current user profile (Protected)
 router.put('/me', UserController.updateCurrentUser);
 
+// PUT /api/users/me/password - Change password (Protected)
+router.put('/me/password', UserController.changePassword);
+
 // Address management routes
 // GET /api/users/addresses - Get all addresses for current user
 router.get('/addresses', UserAddressController.getAllAddresses);

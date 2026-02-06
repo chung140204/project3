@@ -18,21 +18,24 @@ class OrderItemModel {
     return rows[0] || null;
   }
 
-  // Find order items by order ID
-  static async findByOrderId(orderId) {
-    const [rows] = await pool.query(
+  // Find order items by order ID (optional conn for transaction)
+  static async findByOrderId(orderId, conn = null) {
+    const db = conn || pool;
+    const [rows] = await db.query(
       'SELECT oi.*, p.name as product_name, p.image as product_image FROM order_items oi LEFT JOIN products p ON oi.product_id = p.id WHERE oi.order_id = ?',
       [orderId]
     );
     return rows;
   }
 
-  // Create new order item
-  static async create(orderItemData) {
-    const { order_id, product_id, quantity, price, tax_amount, total, size, color } = orderItemData;
-    const [result] = await pool.query(
-      'INSERT INTO order_items (order_id, product_id, quantity, price, tax_amount, total, size, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [order_id, product_id, quantity, price, tax_amount, total, size || null, color || null]
+  // Create new order item (optional conn for transaction)
+  // Must include: order_id, product_id, quantity, price, vat_rate, tax_amount, total, size?, color?
+  static async create(orderItemData, conn = null) {
+    const { order_id, product_id, quantity, price, vat_rate, tax_amount, total, size, color } = orderItemData;
+    const db = conn || pool;
+    const [result] = await db.query(
+      'INSERT INTO order_items (order_id, product_id, quantity, price, vat_rate, tax_amount, total, size, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [order_id, product_id, quantity, price, vat_rate != null ? vat_rate : 0, tax_amount, total, size || null, color || null]
     );
     return this.findById(result.insertId);
   }
@@ -61,6 +64,8 @@ class OrderItemModel {
 }
 
 module.exports = OrderItemModel;
+
+
 
 
 

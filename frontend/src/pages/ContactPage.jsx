@@ -5,10 +5,12 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Form, Input, Button, message, Select } from 'antd';
 import MainLayout from '../layouts/MainLayout';
+import api from '../services/api';
 
 export default function ContactPage() {
   const [form] = Form.useForm();
   const [selectedSubject, setSelectedSubject] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const subjectOptions = [
     { value: 'vat_inquiry', label: 'VAT inquiry' },
@@ -18,11 +20,41 @@ export default function ContactPage() {
     { value: 'other', label: 'Other' }
   ];
 
-  const onFinish = (values) => {
-    console.log('Contact form values:', values);
-    message.success('Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất có thể.');
-    form.resetFields();
-    setSelectedSubject(null); // Reset subject state
+  const onFinish = async (values) => {
+    try {
+      setSubmitting(true);
+
+      const subject =
+        values.subject === 'other'
+          ? (values.other_subject || '').trim()
+          : values.subject;
+
+      const payload = {
+        name: (values.name || '').trim(),
+        phone: (values.phone || '').trim(),
+        subject: subject,
+        message: (values.message || '').trim()
+      };
+
+      const res = await api.post('/contact', payload);
+
+      if (res.data?.success) {
+        message.success(res.data?.message || 'Cảm ơn bạn đã liên hệ! Chúng tôi sẽ phản hồi sớm nhất có thể.');
+        form.resetFields();
+        setSelectedSubject(null);
+      } else {
+        message.error(res.data?.error || 'Gửi tin nhắn thất bại. Vui lòng thử lại.');
+      }
+    } catch (err) {
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        err.message ||
+        'Gửi tin nhắn thất bại. Vui lòng thử lại.';
+      message.error(errorMsg);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const onFinishFailed = (errorInfo) => {
@@ -67,8 +99,8 @@ export default function ContactPage() {
                     <div className="text-2xl">📧</div>
                     <div>
                       <h3 className="font-semibold text-gray-900 mb-1">Email</h3>
-                      <p className="text-gray-600">support@fashionstore.com</p>
-                      <p className="text-gray-600">info@fashionstore.com</p>
+                      <p className="text-gray-600">chungtien6b@gmail.com</p>
+                      {/* <p className="text-gray-600">info@fashionstore.com</p> */}
                     </div>
                   </div>
 
@@ -86,8 +118,8 @@ export default function ContactPage() {
                     <div>
                       <h3 className="font-semibold text-gray-900 mb-1">Địa chỉ</h3>
                       <p className="text-gray-600">
-                        123 Đường ABC, Phường XYZ<br />
-                        Quận 1, TP. Hồ Chí Minh<br />
+                        Nhà số 3, Phố Phan Đình Giót, Phường Phương Liệt<br />
+                        Thành phố Hà Nội<br />
                         Việt Nam
                       </p>
                     </div>
@@ -144,17 +176,6 @@ export default function ContactPage() {
                   ]}
                 >
                   <Input size="large" placeholder="Nguyễn Văn A" />
-                </Form.Item>
-
-                <Form.Item
-                  label="Email"
-                  name="email"
-                  rules={[
-                    { required: true, message: 'Vui lòng nhập email' },
-                    { type: 'email', message: 'Email không hợp lệ' }
-                  ]}
-                >
-                  <Input size="large" placeholder="example@email.com" />
                 </Form.Item>
 
                 <Form.Item
@@ -223,6 +244,7 @@ export default function ContactPage() {
                     size="large"
                     block
                     htmlType="submit"
+                    loading={submitting}
                     className="h-12 text-base font-semibold"
                   >
                     Gửi tin nhắn

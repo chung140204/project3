@@ -41,9 +41,32 @@ class CategoryModel {
     const [result] = await pool.query('DELETE FROM categories WHERE id = ?', [id]);
     return result.affectedRows > 0;
   }
+
+  // Count products in category (for delete validation)
+  static async countProductsByCategoryId(categoryId) {
+    const [rows] = await pool.query(
+      'SELECT COUNT(*) as count FROM products WHERE category_id = ?',
+      [categoryId]
+    );
+    return parseInt(rows[0].count, 10) || 0;
+  }
+
+  // Find by name (for unique check)
+  static async findByName(name, excludeId = null) {
+    let sql = 'SELECT * FROM categories WHERE name = ?';
+    const params = [name];
+    if (excludeId != null) {
+      sql += ' AND id != ?';
+      params.push(excludeId);
+    }
+    const [rows] = await pool.query(sql, params);
+    return rows[0] || null;
+  }
 }
 
 module.exports = CategoryModel;
+
+
 
 
 

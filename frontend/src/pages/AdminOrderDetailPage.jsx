@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Table, Button, Spin, Card, Tag, Divider } from 'antd';
+import { Table, Button, Spin, Card, Tag, Divider, Select, message, Space } from 'antd';
 import { 
   PrinterOutlined, 
   ArrowLeftOutlined,
@@ -16,7 +16,8 @@ import {
   CalendarOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
-  CloseCircleOutlined
+  CloseCircleOutlined,
+  EditOutlined
 } from '@ant-design/icons';
 import MainLayout from '../layouts/MainLayout';
 import api from '../services/api';
@@ -66,12 +67,31 @@ const getStatusBadge = (status) => {
   );
 };
 
+// Get valid next statuses based on current status
+const getValidNextStatuses = (currentStatus) => {
+  const status = currentStatus?.toUpperCase();
+  const transitions = {
+    'PENDING': [
+      { value: 'PAID', label: 'Đã thanh toán', color: 'blue' },
+      { value: 'CANCELLED', label: 'Đã hủy', color: 'red' }
+    ],
+    'PAID': [
+      { value: 'COMPLETED', label: 'Hoàn thành', color: 'green' }
+    ],
+    'COMPLETED': [], // Cannot be changed
+    'CANCELLED': []  // Cannot be changed
+  };
+  return transitions[status] || [];
+};
+
 export default function AdminOrderDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedStatus, setSelectedStatus] = useState(null);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   useEffect(() => {
     const fetchInvoice = async () => {
@@ -83,10 +103,11 @@ export default function AdminOrderDetailPage() {
 
         if (response.data.success) {
           const apiData = response.data.data;
+          const orderStatus = apiData.status || apiData.orderStatus || 'PENDING';
           setInvoice({
             id: apiData.orderId,
             orderDate: apiData.orderDate,
-            status: apiData.status || apiData.orderStatus || 'PENDING',
+            status: orderStatus,
             customerInfo: {
               fullName: apiData.customer.name,
               email: apiData.customer.email,
@@ -101,6 +122,7 @@ export default function AdminOrderDetailPage() {
             summary: apiData.summary,
             voucher: apiData.voucher
           });
+          setSelectedStatus(null); // Reset selected status
         } else {
           setError(response.data.error || 'Không tìm thấy đơn hàng');
         }
@@ -120,6 +142,38 @@ export default function AdminOrderDetailPage() {
       setLoading(false);
     }
   }, [id]);
+
+  // Handle status update
+  const handleStatusUpdate = async (newStatus) => {
+    if (!newStatus || newStatus === invoice?.status) {
+      return;
+    }
+
+    try {
+      setUpdatingStatus(true);
+      const response = await api.put(`/admin/orders/${id}/status`, {
+        status: newStatus
+      });
+
+      if (response.data.success) {
+        message.success('Cập nhật trạng thái đơn hàng thành công!');
+        // Update local state
+        setInvoice(prev => ({
+          ...prev,
+          status: newStatus
+        }));
+        setSelectedStatus(null);
+      } else {
+        message.error(response.data.error || 'Không thể cập nhật trạng thái');
+      }
+    } catch (err) {
+      console.error('Error updating order status:', err);
+      const errorMessage = err.response?.data?.error || err.message || 'Không thể cập nhật trạng thái đơn hàng';
+      message.error(errorMessage);
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
 
   // Table columns for invoice items
   const columns = [
@@ -284,7 +338,7 @@ export default function AdminOrderDetailPage() {
                   <p className="text-xl font-bold text-gray-900">{formatOrderId(invoice.id)}</p>
                 </div>
               </div>
-              <div className="flex flex-col md:items-end gap-2">
+              <div className="flex flex-col md:items-end gap-3">
                 <div>
                   <p className="text-sm text-gray-600 mb-1">Ngày đặt hàng</p>
                   <div className="flex items-center gap-2">
@@ -292,9 +346,63 @@ export default function AdminOrderDetailPage() {
                     <span className="font-medium text-gray-900">{formatDate(orderDate)}</span>
                   </div>
                 </div>
-                <div>
-                  <p className="text-sm text-gray-600 mb-1">Trạng thái</p>
-                  {getStatusBadge(status)}
+                <div className="w-full md:w-auto">
+                  <p className="text-sm text-gray-600 mb-2">Trạng thái đơn hàng</p>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      {getStatusBadge(status)}
+                    </div>
+                    {(() => {
+                      const validNextStatuses = getValidNextStatuses(status);
+                      const isDisabled = status === 'COMPLETED' || status === 'CANCELLED' || validNextStatuses.length === 0;
+                      
+                      if (isDisabled) {
+                        return (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500 italic">
+                              Trạng thái này không thể thay đổi
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="flex flex-col gap-2">
+                          <Select
+                            value={selectedStatus}
+                            placeholder="Cập nhật trạng thái..."
+                            onChange={(value) => {
+                              setSelectedStatus(value);
+                              handleStatusUpdate(value);
+                            }}
+                            disabled={updatingStatus}
+                            loading={updatingStatus}
+                            style={{ width: '100%', minWidth: '220px' }}
+                            size="middle"
+                            suffixIcon={<EditOutlined />}
+                          >
+                            {validNextStatuses.map((statusOption) => (
+                              <Select.Option 
+                                key={statusOption.value} 
+                                value={statusOption.value}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <Tag color={statusOption.color} style={{ margin: 0 }}>
+                                    {statusOption.label}
+                                  </Tag>
+                                </div>
+                              </Select.Option>
+                            ))}
+                          </Select>
+                          {updatingStatus && (
+                            <span className="text-xs text-blue-600 flex items-center gap-1">
+                              <ClockCircleOutlined /> Đang cập nhật trạng thái...
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
             </div>
@@ -382,7 +490,7 @@ export default function AdminOrderDetailPage() {
               columns={columns}
               dataSource={items || []}
               pagination={false}
-              rowKey={(record, index) => `${record.productId}-${index}`}
+              rowKey={(record) => `${record.productId}-${record.price}-${record.quantity}`}
               className="admin-order-table"
             />
           </Card>
